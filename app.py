@@ -96,7 +96,7 @@ def calcular_balance_boson(capacidad_ton_año, params):
     autoconsumo_bop_mwh = toneladas * params['autoconsumo_bop_kwh_ton'] / 1000
     electricidad_neta_mwh = electricidad_bruta_mwh - autoconsumo_bop_mwh
 
-    # Cálculos de Masa
+    # Cálculos de Masa (t/año)
     resultados['Hidrógeno (H₂)'] = toneladas * params['hidrogeno_kg_ton'] / 1000
     resultados['Escoria Vitrificada (IMBYROCK®)'] = toneladas * params['escoria_kg_ton'] / 1000
     resultados['Metales Recuperados'] = toneladas * params['metales_kg_ton'] / 1000
@@ -163,25 +163,33 @@ def calcular_balance_boson(capacidad_ton_año, params):
 
     for clave in claves_para_tabla:
         valor = resultados[clave]
-        unidad = clave[clave.find('('):] if '(' in clave else ''
         nombre = clave.split(' (')[0] if ' (' in clave else clave
 
         # Formato por tipo de indicador
         if 't CO2e' in clave:
+            # Emisiones (ya están en t CO2e/año)
             cantidad_anual = f"{valor:+,.1f} t CO2e"
             por_tonelada = f"{valor*1000/toneladas:+,.1f} kg CO2e/ton" if toneladas > 0 else "N/A"
-        elif 'GJ' in clave or 'MWh' in clave:
-            cantidad_anual = f"{valor:,.1f} {unidad}"
-            por_tonelada = (
-                f"{valor/toneladas:,.1f} {unidad.replace(')', '/ton)')}"
-                if toneladas > 0 else "N/A"
-            )
+
+        elif 'CO₂ del Proceso' in clave:
+            # Flujo de CO2 de proceso (t CO2/año)
+            cantidad_anual = f"{valor:,.1f} t CO2/año"
+            por_tonelada = f"{valor*1000/toneladas:,.1f} kg CO2/ton" if toneladas > 0 else "N/A"
+
+        elif 'GJ' in clave:
+            # Energía térmica
+            cantidad_anual = f"{valor:,.1f} GJ/año"
+            por_tonelada = f"{valor/toneladas:,.1f} GJ/ton" if toneladas > 0 else "N/A"
+
+        elif 'MWh' in clave:
+            # Electricidad
+            cantidad_anual = f"{valor:,.1f} MWh/año"
+            por_tonelada = f"{valor/toneladas:,.1f} MWh/ton" if toneladas > 0 else "N/A"
+
         else:
-            cantidad_anual = f"{valor:,.1f} {unidad}"
-            por_tonelada = (
-                f"{valor*1000/toneladas:,.1f} kg/ton"
-                if toneladas > 0 else "N/A"
-            )
+            # Corrientes de masa (H₂, escoria, metales) en t/año
+            cantidad_anual = f"{valor:,.1f} t/año"
+            por_tonelada = f"{valor*1000/toneladas:,.1f} kg/ton" if toneladas > 0 else "N/A"
 
         data.append([
             nombre,
@@ -222,7 +230,6 @@ def calcular_balance_boson_modular(capacidad_total_ton_año, params):
         Evita reemplazar valores dentro de unidades como 'CO2e'.
         """
         txt = str(valor_celda)
-        # Captura solo el primer número (puede incluir signo, comas o decimales)
         m = re.search(r'([+-]?\d{1,3}(?:[\d,]*)(?:\.\d+)?)', txt)
         if not m:
             return valor_celda  # no hay número que escalar
@@ -513,15 +520,15 @@ if calcular:
             if huella_sin_ccs < 0:
                 estado_carbono = "CARBONO-NEGATIVO"
                 icono = "✅"
-                color_delta = "normal"   # verde (positivo) según convención de Streamlit
+                color_delta = "normal"
             elif huella_sin_ccs == 0:
                 estado_carbono = "CARBONO-NEUTRAL"
                 icono = "⚖️"
-                color_delta = "off"      # sin énfasis de color
+                color_delta = "off"
             else:
                 estado_carbono = "HUELLA POSITIVA"
                 icono = "⚠️"
-                color_delta = "inverse"  # rojo cuando el delta es “malo”
+                color_delta = "inverse"
 
             st.metric(
                 f"{icono} Huella Neta (sin CCS)",
@@ -544,8 +551,8 @@ if calcular:
 
         if num_plantas > 1:
             st.subheader("💰 Implicaciones Estratégicas de la Modularidad")
-            st.markdown(f"""
-            Un sistema de **{num_plantas} plantas modulares** permite:
+            st.markdown("""
+            Un sistema de **varias plantas modulares** permite:
             - **Implementación por fases** (priorización de clústeres geográficos)
             - **Redundancia operativa** (mantenimiento sin interrupción total del sistema)
             - **Escalabilidad progresiva** según disponibilidad de residuos y financiamiento
