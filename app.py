@@ -217,18 +217,28 @@ def calcular_balance_boson_modular(capacidad_total_ton_año, params):
     )
 
     def escalar_valor_celda(valor_celda, factor):
+        """
+        Escala únicamente el primer número real de la cadena.
+        Evita reemplazar valores dentro de unidades como 'CO2e'.
+        """
         txt = str(valor_celda)
-        m = re.search(r'([+-]?[\d,]+\.?\d*)', txt.replace(',', ''))
-        if m:
-            numero = float(m.group(1))
-            numero_escalado = numero * factor
-            # conserva signo explícito si lo tenía
-            if '+' in m.group(1) or '-' in m.group(1):
-                formato = f"{numero_escalado:+,.1f}"
-            else:
-                formato = f"{numero_escalado:,.1f}"
-            return re.sub(r'[+-]?[\d,]+\.?\d*', formato, txt)
-        return valor_celda
+        # Captura solo el primer número (puede incluir signo, comas o decimales)
+        m = re.search(r'([+-]?\d{1,3}(?:[\d,]*)(?:\.\d+)?)', txt)
+        if not m:
+            return valor_celda  # no hay número que escalar
+
+        numero_original = float(m.group(1).replace(',', ''))
+        numero_escalado = numero_original * factor
+
+        # Mantener signo explícito si existía
+        if m.group(1).startswith(('+', '-')):
+            nuevo_numero = f"{numero_escalado:+,.1f}"
+        else:
+            nuevo_numero = f"{numero_escalado:,.1f}"
+
+        inicio, fin = m.span()
+        resultado = txt[:inicio] + nuevo_numero + txt[fin:]
+        return resultado
 
     df_unificado_total = df_unificado_individual.copy()
     df_unificado_total['Cantidad Anual Total'] = df_unificado_total['Cantidad Anual Total'].apply(
@@ -550,3 +560,10 @@ st.caption("""
 2. Parámetros de eficiencia específicos del diseño final
 3. Factor de emisión de la red eléctrica desplazada
 """)
+
+st.markdown(
+    "<p style='text-align:center; font-size:12px; color:gray;'>"
+    "Created by HV Martínez-T. &lt;hader.martinez@upb.edu.co&gt; NDA Boson Energy-UPB 2025"
+    "</p>",
+    unsafe_allow_html=True
+)
