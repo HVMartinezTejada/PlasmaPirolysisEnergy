@@ -137,11 +137,14 @@ def calcular_balance_boson(capacidad_ton_año, params):
         'Escoria Vitrificada (IMBYROCK®)': 'Temperatura plasma >1400°C + enfriamiento rápido (vitrificación)',
         'Metales Recuperados': 'Separación por densidad en baño fundido',
         'CO₂ del Proceso (para captura)': 'Flujo concentrado en syngas, listo para sistema CCUS',
-        'Huella Neta SIN CCS (t CO2e)': 'Suma de Emisiones (Proceso+Indirectas) y Emisiones Evitadas (vertedero+eléctricas)',
+        'Emisiones Evitadas (t CO2e)': 'Suma de emisiones evitadas por vertedero y electricidad desplazada',
+        'Emisiones del Proceso (t CO2e)': 'Emisiones directas del proceso de conversión térmica',
+        'Emisiones Indirectas (t CO2e)': 'Electricidad importada, insumos y auxiliares',
+        'Huella Neta SIN CCS (t CO2e)': 'Emisiones netas (Proceso+Indirectas+Evitadas), sin captura de CO₂',
         'Huella Neta CON CCS (t CO2e)': 'Con captura de CO₂ del syngas (eficiencia ~85%)'
     }
 
-    # Construir DataFrame Unificado (solo algunas corrientes/indicadores clave)
+    # Construir DataFrame Unificado (corrientes/indicadores clave)
     data = []
     claves_para_tabla = [
         'Hidrógeno (H₂)',
@@ -151,6 +154,9 @@ def calcular_balance_boson(capacidad_ton_año, params):
         'Energía en Syngas (GJ)',
         'Electricidad Neta Exportable (MWh)',
         'Calor Útil (GJ)',
+        'Emisiones Evitadas (t CO2e)',
+        'Emisiones del Proceso (t CO2e)',
+        'Emisiones Indirectas (t CO2e)',
         'Huella Neta SIN CCS (t CO2e)',
         'Huella Neta CON CCS (t CO2e)'
     ]
@@ -273,7 +279,7 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
             fontweight='bold'
         )
 
-    # Gráfico 2: Balance de Emisiones
+    # Gráfico 2: Balance de Emisiones (Huella neta)
     huella_sin_ccs_fila = df_unificado[
         df_unificado['Corriente de Salida / Indicador'].str.contains('Huella Neta SIN CCS')
     ]
@@ -306,7 +312,7 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
             fontsize=10
         )
 
-    # Gráfico 3: Desglose de Emisiones (si existieran filas de Emisiones)
+    # Gráfico 3: Desglose de Emisiones
     componentes = []
     valores_componentes = []
     for comp in ['Emisiones Evitadas', 'Emisiones del Proceso', 'Emisiones Indirectas']:
@@ -490,42 +496,29 @@ if calcular:
             st.metric("Electricidad neta exportable", f"{elec_total:,.0f} MWh/año")
 
         with col_res2:
-    huella_sin_ccs = resultados_totales.get('Huella Neta SIN CCS (t CO2e)', 0)
-    huella_con_ccs = resultados_totales.get('Huella Neta CON CCS (t CO2e)', 0)
+            huella_sin_ccs = resultados_totales.get('Huella Neta SIN CCS (t CO2e)', 0)
+            huella_con_ccs = resultados_totales.get('Huella Neta CON CCS (t CO2e)', 0)
 
-    # Determinar el estado de carbono
-    if huella_sin_ccs < 0:
-        estado_carbono = "CARBONO-NEGATIVO"
-        icono = "✅"
-        color_delta = "normal"   # permitido por Streamlit
-    elif huella_sin_ccs == 0:
-        estado_carbono = "CARBONO-NEUTRAL"
-        icono = "⚖️"
-        color_delta = "off"      # sin énfasis de color
-    else:
-        estado_carbono = "HUELLA POSITIVA"
-        icono = "⚠️"
-        color_delta = "inverse"  # rojo cuando delta indica algo “negativo”
+            # Determinar el estado de carbono y color permitido por Streamlit
+            if huella_sin_ccs < 0:
+                estado_carbono = "CARBONO-NEGATIVO"
+                icono = "✅"
+                color_delta = "normal"   # verde (positivo) según convención de Streamlit
+            elif huella_sin_ccs == 0:
+                estado_carbono = "CARBONO-NEUTRAL"
+                icono = "⚖️"
+                color_delta = "off"      # sin énfasis de color
+            else:
+                estado_carbono = "HUELLA POSITIVA"
+                icono = "⚠️"
+                color_delta = "inverse"  # rojo cuando el delta es “malo”
 
-    st.metric(
-        f"{icono} Huella Neta (sin CCS)",
-        f"{huella_sin_ccs:+,.0f} t CO2e/año",
-        delta=estado_carbono,
-        delta_color=color_delta
-    )
-
-    # Esta segunda métrica ya estaba bien con delta_color="normal"
-    if huella_con_ccs < huella_sin_ccs:
-        reduccion_ccs = (
-            (huella_sin_ccs - huella_con_ccs) / abs(huella_sin_ccs) * 100
-            if huella_sin_ccs != 0 else 0
-        )
-        st.metric(
-            "Huella Neta (con CCS)",
-            f"{huella_con_ccs:+,.0f} t CO2e/año",
-            delta=f"Reducción del {reduccion_ccs:.0f}%",
-            delta_color="normal"
-        )
+            st.metric(
+                f"{icono} Huella Neta (sin CCS)",
+                f"{huella_sin_ccs:+,.0f} t CO2e/año",
+                delta=estado_carbono,
+                delta_color=color_delta
+            )
 
             if huella_con_ccs < huella_sin_ccs:
                 reduccion_ccs = (
