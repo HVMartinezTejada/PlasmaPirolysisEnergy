@@ -490,28 +490,42 @@ if calcular:
             st.metric("Electricidad neta exportable", f"{elec_total:,.0f} MWh/año")
 
         with col_res2:
-            huella_sin_ccs = resultados_totales.get('Huella Neta SIN CCS (t CO2e)', 0)
-            huella_con_ccs = resultados_totales.get('Huella Neta CON CCS (t CO2e)', 0)
+    huella_sin_ccs = resultados_totales.get('Huella Neta SIN CCS (t CO2e)', 0)
+    huella_con_ccs = resultados_totales.get('Huella Neta CON CCS (t CO2e)', 0)
 
-            if huella_sin_ccs < 0:
-                estado_carbono = "CARBONO-NEGATIVO"
-                color_estado = "green"
-                icono = "✅"
-            elif huella_sin_ccs == 0:
-                estado_carbono = "CARBONO-NEUTRAL"
-                color_estado = "blue"
-                icono = "⚖️"
-            else:
-                estado_carbono = "HUELLA POSITIVA"
-                color_estado = "orange"
-                icono = "⚠️"
+    # Determinar el estado de carbono
+    if huella_sin_ccs < 0:
+        estado_carbono = "CARBONO-NEGATIVO"
+        icono = "✅"
+        color_delta = "normal"   # permitido por Streamlit
+    elif huella_sin_ccs == 0:
+        estado_carbono = "CARBONO-NEUTRAL"
+        icono = "⚖️"
+        color_delta = "off"      # sin énfasis de color
+    else:
+        estado_carbono = "HUELLA POSITIVA"
+        icono = "⚠️"
+        color_delta = "inverse"  # rojo cuando delta indica algo “negativo”
 
-            st.metric(
-                f"{icono} Huella Neta (sin CCS)",
-                f"{huella_sin_ccs:+,.0f} t CO2e/año",
-                delta=estado_carbono,
-                delta_color=color_estado
-            )
+    st.metric(
+        f"{icono} Huella Neta (sin CCS)",
+        f"{huella_sin_ccs:+,.0f} t CO2e/año",
+        delta=estado_carbono,
+        delta_color=color_delta
+    )
+
+    # Esta segunda métrica ya estaba bien con delta_color="normal"
+    if huella_con_ccs < huella_sin_ccs:
+        reduccion_ccs = (
+            (huella_sin_ccs - huella_con_ccs) / abs(huella_sin_ccs) * 100
+            if huella_sin_ccs != 0 else 0
+        )
+        st.metric(
+            "Huella Neta (con CCS)",
+            f"{huella_con_ccs:+,.0f} t CO2e/año",
+            delta=f"Reducción del {reduccion_ccs:.0f}%",
+            delta_color="normal"
+        )
 
             if huella_con_ccs < huella_sin_ccs:
                 reduccion_ccs = (
