@@ -37,6 +37,10 @@ PARAMS_PROCESO = {
     'emis_indirectas_kgco2e_ton': 100.0,
 }
 
+# UMBRALES PARA AUTOSUFICIENCIA TÉRMICA (en GJ/ton)
+UMBRAL_AUTOSUF_GJ_TON = 9.0    # ≈ 2.5 MWh/ton ≈ 2150 kcal/kg
+UMBRAL_CASI_AUTOSUF_GJ_TON = 7.0
+
 # =============================================
 # HELPER PARA EXTRAER NÚMEROS DE CADENAS
 # =============================================
@@ -66,6 +70,22 @@ def calcular_parametros_desde_composicion(composicion_rsu):
         h2_potencial_kg_ton += fraccion * datos['h2_potencial_kg_ton']
         fraccion_cenizas += fraccion * (datos['cenizas_pct'] / 100.0)
 
+    # Cálculos energéticos equivalentes
+    pci_mwh_ton = pci_mezcla_gj_ton / 3.6          # 1 MWh = 3.6 GJ
+    pci_kcal_kg = pci_mezcla_gj_ton * 239.0        # ≈ 1 GJ/t = 239 kcal/kg
+
+    # Evaluación de autosuficiencia térmica
+    if pci_mezcla_gj_ton >= UMBRAL_AUTOSUF_GJ_TON:
+        autosuf_estado = "Autosuficiente térmicamente"
+        autosuf_nivel = "autosuficiente"
+    elif pci_mezcla_gj_ton >= UMBRAL_CASI_AUTOSUF_GJ_TON:
+        autosuf_estado = "Casi autosuficiente térmicamente"
+        autosuf_nivel = "casi_autosuficiente"
+    else:
+        autosuf_estado = "Requiere apoyo energético externo"
+        autosuf_nivel = "requiere_apoyo"
+
+    # Cálculos de productos del proceso
     factor_eficiencia_h2 = 0.25
     h2_real_kg_ton = h2_potencial_kg_ton * factor_eficiencia_h2
     fraccion_vitrificacion = 0.90
@@ -75,6 +95,11 @@ def calcular_parametros_desde_composicion(composicion_rsu):
     params_ajustados = PARAMS_PROCESO.copy()
     params_ajustados.update({
         'pci_residuo_gj_ton': round(pci_mezcla_gj_ton, 2),
+        'energia_pci_mwh_ton': round(pci_mwh_ton, 2),
+        'energia_pci_kcal_kg': int(round(pci_kcal_kg)),
+        'autosuficiencia_estado': autosuf_estado,
+        'autosuficiencia_nivel': autosuf_nivel,
+        'autosuficiencia_umbral_gj_ton': UMBRAL_AUTOSUF_GJ_TON,
         'hidrogeno_kg_ton': round(h2_real_kg_ton, 1),
         'escoria_kg_ton': round(escoria_kg_ton, 1),
         'metales_kg_ton': 10.0,
@@ -108,8 +133,10 @@ def calcular_balance_boson(capacidad_ton_año, params):
     resultados['Calor Útil (GJ)'] = round(toneladas * params['calor_util_gj_ton'], 1)
 
     # Cálculos de Emisiones (kg CO2e)
-    emis_evitadas_total_kg = toneladas * (params['emis_evitadas_vertedero_kgco2e_ton'] +
-                                          params['emis_evitadas_electricidad_kgco2e_ton'])
+    emis_evitadas_total_kg = toneladas * (
+        params['emis_evitadas_vertedero_kgco2e_ton'] +
+        params['emis_evitadas_electricidad_kgco2e_ton']
+    )
     emis_proceso_kg = toneladas * params['co2_proceso_kg_ton']
     emis_indirectas_kg = toneladas * params['emis_indirectas_kgco2e_ton']
     huella_proceso_sin_ccs_kg = emis_proceso_kg + emis_indirectas_kg
@@ -118,7 +145,7 @@ def calcular_balance_boson(capacidad_ton_año, params):
     huella_proceso_con_ccs_kg = emis_proceso_con_ccs_kg + emis_indirectas_kg
     huella_neta_con_ccs_kg = huella_proceso_con_ccs_kg + emis_evitadas_total_kg
 
-    # Almacenar resultados de emisiones en t CO2e
+    # Emisiones en t CO2e
     resultados['Emisiones Evitadas (t CO2e)'] = emis_evitadas_total_kg / 1000
     resultados['Emisiones del Proceso (t CO2e)'] = emis_proceso_kg / 1000
     resultados['Emisiones Indirectas (t CO2e)'] = emis_indirectas_kg / 1000
@@ -165,29 +192,23 @@ def calcular_balance_boson(capacidad_ton_año, params):
         valor = resultados[clave]
         nombre = clave.split(' (')[0] if ' (' in clave else clave
 
-        # Formato por tipo de indicador
         if 't CO2e' in clave:
-            # Emisiones (ya están en t CO2e/año)
             cantidad_anual = f"{valor:+,.1f} t CO2e"
             por_tonelada = f"{valor*1000/toneladas:+,.1f} kg CO2e/ton" if toneladas > 0 else "N/A"
 
         elif 'CO₂ del Proceso' in clave:
-            # Flujo de CO2 de proceso (t CO2/año)
             cantidad_anual = f"{valor:,.1f} t CO2/año"
             por_tonelada = f"{valor*1000/toneladas:,.1f} kg CO2/ton" if toneladas > 0 else "N/A"
 
         elif 'GJ' in clave:
-            # Energía térmica
             cantidad_anual = f"{valor:,.1f} GJ/año"
             por_tonelada = f"{valor/toneladas:,.1f} GJ/ton" if toneladas > 0 else "N/A"
 
         elif 'MWh' in clave:
-            # Electricidad
             cantidad_anual = f"{valor:,.1f} MWh/año"
             por_tonelada = f"{valor/toneladas:,.1f} MWh/ton" if toneladas > 0 else "N/A"
 
         else:
-            # Corrientes de masa (H₂, escoria, metales) en t/año
             cantidad_anual = f"{valor:,.1f} t/año"
             por_tonelada = f"{valor*1000/toneladas:,.1f} kg/ton" if toneladas > 0 else "N/A"
 
@@ -232,12 +253,11 @@ def calcular_balance_boson_modular(capacidad_total_ton_año, params):
         txt = str(valor_celda)
         m = re.search(r'([+-]?\d{1,3}(?:[\d,]*)(?:\.\d+)?)', txt)
         if not m:
-            return valor_celda  # no hay número que escalar
+            return valor_celda
 
         numero_original = float(m.group(1).replace(',', ''))
         numero_escalado = numero_original * factor
 
-        # Mantener signo explícito si existía
         if m.group(1).startswith(('+', '-')):
             nuevo_numero = f"{numero_escalado:+,.1f}"
         else:
@@ -317,6 +337,7 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
     axes[0, 1].axhline(y=0, color='black', linestyle='-', linewidth=0.5)
     axes[0, 1].set_title('2. Balance Neto de Emisiones (t CO2e/año)', fontweight='bold')
     axes[0, 1].set_ylabel('t CO2e por año')
+    max_abs_emis = max(map(abs, valores_emis)) if valores_emis else 1.0
     for bar, val in zip(bars2, valores_emis):
         axes[0, 1].text(
             bar.get_x() + bar.get_width() / 2,
@@ -324,7 +345,7 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
             f'{val:+,.0f} t',
             ha='center',
             va='center',
-            color='white' if abs(val) > max(map(abs, valores_emis)) * 0.3 else 'black',
+            color='white' if abs(val) > max_abs_emis * 0.3 else 'black',
             fontweight='bold',
             fontsize=10
         )
@@ -440,25 +461,59 @@ st.header("📥 Configuración de la Planta")
 # Calcular parámetros ajustados desde la composición
 params_ajustados, pci_mezcla = calcular_parametros_desde_composicion(composicion_actual)
 
-# Métricas clave de la composición
+# Métricas clave de la composición + autosuficiencia térmica
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("PCI de la mezcla", f"{pci_mezcla:.2f} GJ/ton")
 with col2:
-    st.metric("H₂ estimado", f"{params_ajustados['hidrogeno_kg_ton']} kg/ton")
+    st.metric("PCI equivalente", f"{params_ajustados['energia_pci_mwh_ton']:.2f} MWh/ton")
 with col3:
-    st.metric("Escoria estimada", f"{params_ajustados['escoria_kg_ton']} kg/ton")
+    st.metric("PCI equivalente", f"{params_ajustados['energia_pci_kcal_kg']:,d} kcal/kg")
+
+# Tarjeta de autosuficiencia térmica
+nivel_autosuf = params_ajustados['autosuficiencia_nivel']
+estado_autosuf = params_ajustados['autosuficiencia_estado']
+pci_umbral = params_ajustados['autosuficiencia_umbral_gj_ton']
+
+if nivel_autosuf == "autosuficiente":
+    st.success(
+        f"🔥 **Autosuficiencia térmica:** {estado_autosuf}. "
+        f"El PCI ({pci_mezcla:.2f} GJ/ton) supera el umbral de ≈{pci_umbral:.1f} GJ/ton "
+        f"(≈2.5 MWh/ton), lo que favorece operar sin aportes energéticos externos significativos."
+    )
+elif nivel_autosuf == "casi_autosuficiente":
+    st.warning(
+        f"🌡️ **Autosuficiencia térmica:** {estado_autosuf}. "
+        f"El PCI ({pci_mezcla:.2f} GJ/ton) está en la franja 7–9 GJ/ton; "
+        f"puede requerirse apoyo energético moderado según el diseño del reactor y el plasma."
+    )
+else:
+    st.error(
+        f"❄️ **Autosuficiencia térmica:** {estado_autosuf}. "
+        f"El PCI ({pci_mezcla:.2f} GJ/ton) está por debajo de ~{UMBRAL_CASI_AUTOSUF_GJ_TON:.1f} GJ/ton, "
+        f"lo que implica una mayor dependencia de energía externa para sostener la operación."
+    )
 
 # Entrada de capacidad de procesamiento
 st.subheader("Capacidad de Procesamiento")
 capacidad_total = st.number_input(
     "Cantidad total de residuos a procesar (toneladas/año):",
     min_value=1000.0,
-    max_value=500000.0,
+    max_value=1300000.0,
     value=36000.0,
     step=1000.0,
-    help="La capacidad mínima para una planta FOAK es de 36,000 ton/año."
+    help=(
+        "La capacidad mínima para una planta FOAK es de 36,000 ton/año. "
+        "Capacidades muy altas representan la suma de varias plantas modulares equivalentes."
+    )
 )
+
+if capacidad_total > 200000:
+    st.info(
+        "📌 Estás modelando un **escenario agregado de varias plantas modulares**, "
+        "no una única instalación. Los resultados representan la suma de N unidades estándar "
+        "bajo los mismos supuestos de diseño."
+    )
 
 # Botón para calcular
 calcular = st.button("🚀 Calcular Balance Completo", type="primary", use_container_width=True)
@@ -482,7 +537,7 @@ if calcular:
 
         if num_plantas > 1:
             st.info(
-                f"🔧 Nota: Despliegue modular basado en unidades estandarizadas "
+                f"🔧 Despliegue modular basado en unidades estandarizadas "
                 f"de {params_ajustados['capacidad_foak_ton_año']:,.0f} ton/año."
             )
 
@@ -516,7 +571,6 @@ if calcular:
             huella_sin_ccs = resultados_totales.get('Huella Neta SIN CCS (t CO2e)', 0)
             huella_con_ccs = resultados_totales.get('Huella Neta CON CCS (t CO2e)', 0)
 
-            # Determinar el estado de carbono y color permitido por Streamlit
             if huella_sin_ccs < 0:
                 estado_carbono = "CARBONO-NEGATIVO"
                 icono = "✅"
