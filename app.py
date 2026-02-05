@@ -13,8 +13,6 @@ st.markdown("---")
 
 # =============================================
 # CRÉDITOS (requerido)
-# - Mantengo el texto legal en inglés EXACTO (por trazabilidad/branding),
-#   y agrego una línea en español técnico.
 # =============================================
 CREATED_BY_TEXT_EN = "Created by: H. Vladimir Martínez-T <hader.martinez@upb.edu.co> NDA Boson Energy-UPB 2025"
 CREATED_BY_HTML = (
@@ -32,6 +30,9 @@ CREATED_BY_HTML = (
 # Hidrógeno (LHV ~ 33.33 kWh/kg) => 33.33 kWh/kg * 0.0036 GJ/kWh ≈ 0.12 GJ/kg
 LHV_H2_KWH_PER_KG = 33.33
 LHV_H2_GJ_PER_KG = LHV_H2_KWH_PER_KG * 0.0036
+
+# 1 MWh = 3.6 GJ
+GJ_PER_MWH = 3.6
 
 # Umbrales de autosuficiencia térmica (GJ/ton)
 UMBRAL_AUTOSUF_GJ_TON = 9.0     # ≈ 2.5 MWh/ton ≈ 2150 kcal/kg
@@ -88,12 +89,6 @@ def clamp(x, a, b):
 # PARÁMETROS POR MODO (evita doble conteo)
 # =============================================
 def defaults_por_modo(modo_operacion: str, h2_calidad: str):
-    """
-    Defaults dependientes del modo, para mantener la app didáctica:
-    - Modo A: maximiza electricidad+calor (H₂=0 por defecto).
-    - Modo B: maximiza H₂ (puede requerir consumo parásito de red).
-    - Modo C: reparte syngas entre potencia y H₂ (compensación explícita).
-    """
     base = {
         "capacidad_foak_ton_año": 36000,     # FOAK/BEU (planta, no reactor)
         "autoconsumo_bop_kwh_ton": 100,      # BOP fijo
@@ -105,7 +100,7 @@ def defaults_por_modo(modo_operacion: str, h2_calidad: str):
         "heat_recov_fc": 0.80,
         "heat_recov_process": 0.60,
         "heat_recov_plasma_loss": 0.40,
-        "eta_fc_el": 0.55,                  # celda de combustible (Fuel Cell)
+        "eta_fc_el": 0.55,                  # celda de combustible
     }
 
     if modo_operacion == "Modo A — Power/Heat-centric":
@@ -118,12 +113,11 @@ def defaults_por_modo(modo_operacion: str, h2_calidad: str):
         })
 
     elif modo_operacion == "Modo B — H₂-centric":
-        # Calibración didáctica para ~50 vs ~70 kg/ton (con PCI ~12 GJ/ton)
         if h2_calidad.startswith("Movilidad"):
-            eta_h2 = 0.68         # ~50 kg/ton (alta pureza)
-            kwh_per_kg = 12.0     # mayor consumo parásito por pureza/compresión
+            eta_h2 = 0.68
+            kwh_per_kg = 12.0
         else:
-            eta_h2 = 0.85         # ~60–70 kg/ton (estacionario)
+            eta_h2 = 0.85
             kwh_per_kg = 10.0
 
         base.update({
@@ -163,20 +157,12 @@ def calcular_kpis_por_ton(
     usar_fuel_cell: bool,
     frac_h2_a_fc: float
 ):
-    """
-    KPIs por tonelada (evita doble conteo):
-    - La energía del syngas disponible se reparte: ruta potencia vs ruta H₂.
-    - Consumo parásito: electricidad importada para upgrading a H₂ (kWh/kg H₂).
-    - Celda de combustible: opcional, convierte fracción del H₂ a electricidad (vector → kWh).
-    """
     E_in_gj = pci_gj_ton
     E_syngas_gj = E_in_gj * params_modo["eff_plasma"]
 
-    # Autoconsumo interno (fracción del syngas)
     E_autoconsumo_gj = E_syngas_gj * params_modo["autoconsumo_syngas_frac"]
     E_disp_gj = max(E_syngas_gj - E_autoconsumo_gj, 0.0)
 
-    # Reparto (split)
     f_h2 = clamp(split_syngas_a_h2, 0.0, 1.0)
     f_power = 1.0 - f_h2
 
@@ -184,29 +170,29 @@ def calcular_kpis_por_ton(
     H2_lhv_gj = E_disp_gj * f_h2 * params_modo["eta_syngas_to_h2_lhv"]
     H2_kg = H2_lhv_gj / LHV_H2_GJ_PER_KG if LHV_H2_GJ_PER_KG > 0 else 0.0
 
-    # Consumo parásito (MWh/ton)
+    # Consumo parásito (MWhₑ/ton)
     parasitic_mwh = (H2_kg * params_modo["kwh_per_kg_h2_parasitic"]) / 1000.0
 
-    # Electricidad directa (MWh/ton)
+    # Electricidad directa (MWhₑ/ton)
     el_direct_gj = E_disp_gj * f_power * params_modo["eta_el_direct"]
-    el_direct_mwh = el_direct_gj / 3.6
+    el_direct_mwh = el_direct_gj / GJ_PER_MWH
 
-    # Celda de combustible (opcional)
+    # Celda de combustible
     frac_fc = clamp(frac_h2_a_fc, 0.0, 1.0) if usar_fuel_cell else 0.0
     el_fc_gj = H2_lhv_gj * frac_fc * params_modo["eta_fc_el"]
-    el_fc_mwh = el_fc_gj / 3.6
+    el_fc_mwh = el_fc_gj / GJ_PER_MWH
 
-    # H2 exportable vs consumido en celda de combustible
+    # H2 exportable vs consumido
     H2_export_kg = H2_kg * (1.0 - frac_fc)
     H2_fc_kg = H2_kg * frac_fc
 
-    # BOP fijo (MWh/ton)
+    # BOP fijo (MWhₑ/ton)
     bop_mwh = params_modo["autoconsumo_bop_kwh_ton"] / 1000.0
 
-    # Electricidad neta (MWh/ton)
+    # Electricidad neta (MWhₑ/ton)
     el_neta_mwh = el_direct_mwh + el_fc_mwh - parasitic_mwh - bop_mwh
 
-    # Calor útil (proxy didáctico)
+    # Calor útil (GJ/ton y MWhₜₕ/ton)
     heat_from_power_gj = (E_disp_gj * f_power * (1.0 - params_modo["eta_el_direct"])
                           * params_modo["heat_recov_power"]) if params_modo["eta_el_direct"] > 0 else 0.0
     heat_from_fc_gj = (H2_lhv_gj * frac_fc * (1.0 - params_modo["eta_fc_el"])
@@ -215,9 +201,9 @@ def calcular_kpis_por_ton(
     heat_from_plasma_loss_gj = E_in_gj * (1.0 - params_modo["eff_plasma"]) * params_modo["heat_recov_plasma_loss"]
 
     heat_util_gj = heat_from_power_gj + heat_from_fc_gj + heat_from_process_gj + heat_from_plasma_loss_gj
-    heat_util_mwhth = heat_util_gj / 3.6
+    heat_util_mwhth = heat_util_gj / GJ_PER_MWH  # ✅ conversión a MWhₜₕ/ton
 
-    # Escoria vitrificada (kg/ton): basado en cenizas, y acotado al KPI 100–120 kg/ton
+    # Escoria vitrificada (kg/ton)
     escoria_kg = ash_frac * 1000.0 * 0.90
     escoria_kg = clamp(escoria_kg, 100.0, 120.0)
 
@@ -233,12 +219,12 @@ def calcular_kpis_por_ton(
         "el_bop_mwh_ton": bop_mwh,
         "el_neta_mwh_ton": el_neta_mwh,
         "heat_util_gj_ton": heat_util_gj,
-        "heat_util_mwhth_ton": heat_util_mwhth,
+        "heat_util_mwhth_ton": heat_util_mwhth,  # ✅ nuevo KPI mostrado
         "escoria_kg_ton": escoria_kg
     }
 
 # =============================================
-# EMISIONES POR TONELADA (línea base vs Boson)
+# EMISIONES POR TONELADA
 # =============================================
 def calcular_emisiones_por_ton(
     kpis_ton: dict,
@@ -249,16 +235,6 @@ def calcular_emisiones_por_ton(
     dist_baseline_km: float,
     dist_cluster_km: float
 ):
-    """
-    Línea base:
-      - Relleno sanitario (kgCO2e/ton)
-      - Transporte AMVA→La Pradera (kgCO2/ton)
-    Boson:
-      - Transporte clúster→BEU
-      - Efecto electricidad neta: exporta => evita, importa => carga huella
-      - Proceso (proxy: CO2 capturable si no CCS) + indirectas no eléctricas
-    Retorna huella neta: (Boson - Línea base) [kgCO2e/ton]
-    """
     EF_grid_kg_mwh = EF_grid_tco2e_mwh * 1000.0
 
     baseline_landfill_kg = EF_landfill_kg_ton
@@ -267,14 +243,11 @@ def calcular_emisiones_por_ton(
 
     boson_transport_kg = dist_cluster_km * EF_transport_kg_tkm
 
-    # Exportación eléctrica => negativo (evita red). Importación => positivo.
+    # Exportación => evita (negativo); importación => carga huella (positivo).
     boson_grid_kg = -kpis_ton["el_neta_mwh_ton"] * EF_grid_kg_mwh
 
-    # Proceso (proxy capturable)
     direct_no_ccs_kg = params_modo["co2_capturable_kg_ton"]
     direct_with_ccs_kg = direct_no_ccs_kg * (1.0 - params_modo["factor_captura_ccs"])
-
-    # Indirectas no eléctricas (proxy)
     indirect_kg = params_modo["emis_indirectas_kgco2e_ton"]
 
     boson_total_no_ccs_kg = boson_transport_kg + boson_grid_kg + direct_no_ccs_kg + indirect_kg
@@ -283,10 +256,9 @@ def calcular_emisiones_por_ton(
     huella_neta_no_ccs_kg = boson_total_no_ccs_kg - baseline_total_kg
     huella_neta_with_ccs_kg = boson_total_with_ccs_kg - baseline_total_kg
 
-    # Componentes (beneficios/penalidades)
-    beneficio_landfill_kg = baseline_landfill_kg  # desvío 1.0 ton/ton
+    beneficio_landfill_kg = baseline_landfill_kg
     beneficio_transport_kg = baseline_transport_kg - boson_transport_kg
-    efecto_electricidad_kg = kpis_ton["el_neta_mwh_ton"] * EF_grid_kg_mwh  # positivo si exporta
+    efecto_electricidad_kg = kpis_ton["el_neta_mwh_ton"] * EF_grid_kg_mwh
 
     return {
         "baseline_landfill_kg": baseline_landfill_kg,
@@ -317,12 +289,12 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
         fontweight='bold'
     )
 
-    # 1) Productos principales (por año) — NOTA: unidades distintas por barra
+    # 1) Productos principales — unidades por barra
     productos = [
         ("Hidrógeno (H₂) Exportable", "H₂ exportable\n(t/año)"),
-        ("Electricidad Neta", "Electricidad neta\n(MWh/año)"),
+        ("Electricidad Neta", "Electricidad neta\n(MWhₑ/año)"),
         ("Escoria Vitrificada", "Escoria vitrificada\n(t/año)"),
-        ("Calor Útil", "Calor útil\n(GJ/año)")
+        ("Calor Útil", "Calor útil\n(MWhₜₕ/año)")  # ✅ ahora MWhₜₕ
     ]
 
     etiquetas = []
@@ -370,8 +342,8 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
 
     # 3) Componentes (beneficios/penalidades)
     componentes = []
-    valores = []
-    colores = []
+    valores_c = []
+    colores_c = []
     for comp, col in [
         ('Beneficio: Relleno sanitario evitado', '#4caf50'),
         ('Beneficio: Transporte evitado', '#4caf50'),
@@ -382,11 +354,11 @@ def visualizar_balance_unificado(df_unificado, capacidad_total):
         fila = df_unificado[df_unificado['Corriente de Salida / Indicador'].str.contains(comp)]
         if not fila.empty:
             componentes.append(comp.replace('Beneficio: ', '').replace('Efecto: ', '').replace('Emisiones: ', ''))
-            valores.append(extraer_numero(fila.iloc[0]['Cantidad Anual Total']))
-            colores.append(col)
+            valores_c.append(extraer_numero(fila.iloc[0]['Cantidad Anual Total']))
+            colores_c.append(col)
 
     if componentes:
-        axes[1, 0].barh(componentes, valores, color=colores)
+        axes[1, 0].barh(componentes, valores_c, color=colores_c)
         axes[1, 0].axvline(x=0, color='black', linestyle='-', linewidth=0.5)
         axes[1, 0].set_title('3. Componentes (t CO2e/año)\n(+ beneficio, − penalidad)', fontweight='bold')
         axes[1, 0].set_xlabel('t CO2e por año')
@@ -435,7 +407,6 @@ with st.sidebar:
         index=2
     )
 
-    # Requerimiento previo: dejar la frase “tal cual”, pero ahora con equivalente en español.
     st.caption("Una planta BEU es un arreglo de 1–3 cámaras/reactores según la oferta de residuos.")
     st.caption("A BEU plant is a setup of 1–3 reactor chambers depending on waste supply.")
 
@@ -446,7 +417,6 @@ with st.sidebar:
     else:
         st.info("📌 Enfocado en **hub energético**: compensación explícita entre ruta potencia y ruta H₂ (y celda de combustible opcional).")
 
-    # Calidad de H2 (solo si aplica)
     if modo_operacion in ["Modo B — H₂-centric", "Modo C — Mixed"]:
         h2_calidad = st.radio(
             "Calidad/uso típico del H₂ (afecta rendimiento y consumo parásito):",
@@ -459,7 +429,6 @@ with st.sidebar:
     else:
         h2_calidad = "N/A"
 
-    # Split a H2 (didáctico)
     if modo_operacion == "Modo A — Power/Heat-centric":
         split_h2_pct = 0
     elif modo_operacion == "Modo B — H₂-centric":
@@ -469,7 +438,6 @@ with st.sidebar:
 
     split_h2 = split_h2_pct / 100.0
 
-    # Celda de combustible opcional
     usar_fuel_cell = False
     frac_h2_a_fc = 0.0
     if modo_operacion in ["Modo B — H₂-centric", "Modo C — Mixed"]:
@@ -482,7 +450,6 @@ with st.sidebar:
             frac_h2_a_fc_pct = st.slider("% del H₂ producido que va a celda de combustible:", 0, 100, 100 if modo_operacion == "Modo C — Mixed" else 0, 5)
             frac_h2_a_fc = frac_h2_a_fc_pct / 100.0
 
-    # Defaults del modo + editor avanzado
     params_modo = defaults_por_modo(modo_operacion, h2_calidad)
 
     st.markdown("---")
@@ -551,7 +518,7 @@ with st.sidebar:
         st.success("✅ Usando RSU municipal genérico.")
     else:
         st.warning("🛠️ Ajusta porcentajes. Deben sumar 100%.")
-        composicion_actual = {k: v.copy() for k, v in LA_PRADERA_PRESET.items()}  # arranque desde La Pradera
+        composicion_actual = {k: v.copy() for k, v in LA_PRADERA_PRESET.items()}
         for componente in composicion_actual.keys():
             nombre = componente.replace("_", " ").title()
             composicion_actual[componente]["pct"] = st.slider(
@@ -626,7 +593,7 @@ for componente, datos in composicion_actual.items():
     pci_mezcla_gj_ton += fr * datos["pci_gj_ton"]
     fraccion_cenizas += fr * (datos["cenizas_pct"] / 100.0)
 
-pci_mwh_ton = pci_mezcla_gj_ton / 3.6
+pci_mwh_ton = pci_mezcla_gj_ton / GJ_PER_MWH
 pci_kcal_kg = pci_mezcla_gj_ton * 239.0
 
 col1, col2, col3 = st.columns(3)
@@ -717,7 +684,7 @@ if calcular:
 
         toneladas = capacidad_por_planta
 
-        residuos_desviados_t = toneladas  # 1.0 ton/ton
+        residuos_desviados_t = toneladas
         H2_export_t = (kpis_ton["H2_export_kg_ton"] * toneladas) / 1000.0
         H2_fc_t = (kpis_ton["H2_fc_kg_ton"] * toneladas) / 1000.0
         escoria_t = (kpis_ton["escoria_kg_ton"] * toneladas) / 1000.0
@@ -727,7 +694,9 @@ if calcular:
         E_syngas_gj = kpis_ton["E_syngas_gj_ton"] * toneladas
         el_neta_mwh = kpis_ton["el_neta_mwh_ton"] * toneladas
         el_parasitic_mwh = kpis_ton["el_parasitic_mwh_ton"] * toneladas
-        heat_gj = kpis_ton["heat_util_gj_ton"] * toneladas
+
+        # ✅ Calor útil ahora en MWhₜₕ (anual)
+        heat_mwhth = kpis_ton["heat_util_mwhth_ton"] * toneladas
 
         baseline_t = (emis_ton["baseline_total_kg"] * toneladas) / 1000.0
         boson_no_ccs_t = (emis_ton["boson_total_no_ccs_kg"] * toneladas) / 1000.0
@@ -758,14 +727,15 @@ if calcular:
         add_row("H₂ a celda de combustible (consumido)", scale(H2_fc_t), "t/año", kpis_ton["H2_fc_kg_ton"], "kg/ton",
                 "Fracción del H₂ usada para producir electricidad (vector energético).")
 
-        add_row("Electricidad Neta", scale(el_neta_mwh), "MWh/año", kpis_ton["el_neta_mwh_ton"], "MWh/ton",
+        add_row("Electricidad Neta", scale(el_neta_mwh), "MWhₑ/año", kpis_ton["el_neta_mwh_ton"], "MWhₑ/ton",
                 "Electricidad directa + celda de combustible − consumo parásito − BOP.")
 
-        add_row("Electricidad importada (consumo parásito)", scale(el_parasitic_mwh), "MWh/año", kpis_ton["el_parasitic_mwh_ton"], "MWh/ton",
+        add_row("Electricidad importada (consumo parásito)", scale(el_parasitic_mwh), "MWhₑ/año", kpis_ton["el_parasitic_mwh_ton"], "MWhₑ/ton",
                 f"Peaje eléctrico del upgrading a H₂ (~{params_modo['kwh_per_kg_h2_parasitic']:.1f} kWh/kg H₂).")
 
-        add_row("Calor Útil", scale(heat_gj), "GJ/año", kpis_ton["heat_util_gj_ton"], "GJ/ton",
-                "Calor recuperable (aprox. por integración térmica).")
+        # ✅ Calor útil ahora en MWhₜₕ (tabla y, por arrastre, también en el cuadro inferior derecho)
+        add_row("Calor Útil", scale(heat_mwhth), "MWhₜₕ/año", kpis_ton["heat_util_mwhth_ton"], "MWhₜₕ/ton",
+                "Calor útil recuperable/exportable (energía térmica).")
 
         add_row("Escoria vitrificada (IMBYROCK®)", scale(escoria_t), "t/año", kpis_ton["escoria_kg_ton"], "kg/ton",
                 "Sólido inerte/vítreo. Potencial valorización (requiere QA/regulación local).")
@@ -823,9 +793,9 @@ if calcular:
             rows,
             columns=[
                 "Corriente de salida / Indicador",
-                "Cantidad anual total",
-                "Por tonelada de residuo",
-                "Condición técnica / Nota"
+                "Cantidad Anual Total",
+                "Por Tonelada de Residuo",
+                "Condición Técnica / Nota"
             ]
         )
 
