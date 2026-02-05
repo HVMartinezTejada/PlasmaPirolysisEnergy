@@ -461,7 +461,7 @@ with st.sidebar:
     st.subheader("🏭 Definición BEU (planta)")
     st.info(
         "FOAK / 1 BEU ≈ **36.000 t/año**.\n\n"
-        "En la app: **1 BEU (planta) ≈ 2×(2 t/h) operando + 1 standby**."
+        "En la app: **1 BEU (planta) ≈ 2 reactores ×(2 t/h)-operando + 1 reactor en standby**."
     )
 
     st.subheader("🧪 Residuos (preset + ajuste)")
