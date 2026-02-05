@@ -381,7 +381,7 @@ with st.sidebar:
     )
 
     st.caption("Una planta BEU es un arreglo de 1–3 cámaras/reactores según la oferta de residuos.")
-    st.caption("A BEU plant is a setup of 1–3 reactor chambers depending on waste supply.")
+    # st.caption("A BEU plant is a setup of 1–3 reactor chambers depending on waste supply.")
 
     if modo_operacion == "Modo A — Power/Heat-centric":
         st.info("📌 Enfocado en **electricidad neta** y **calor útil**. H₂ por defecto = 0 (evita doble conteo).")
