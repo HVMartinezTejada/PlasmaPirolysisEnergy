@@ -40,9 +40,9 @@ PRESET_RSU_GENERICO = {
 }
 
 # =============================================
-# PARÁMETROS BASE (comunes)
+# PARÁMETROS DEFAULT (comunes)
 # =============================================
-PARAMS_BASE = {
+PARAMS_DEFAULT = {
     # Capacidad BEU (FOAK) — 1 planta (no 1 reactor)
     "capacidad_beu_ton_ano": 36000.0,
 
@@ -50,7 +50,7 @@ PARAMS_BASE = {
     "eficiencia_conversion_plasma": 0.78,
     "eficiencia_generacion_electrica": 0.38,
     "autoconsumo_proceso_fraction": 0.28,
-    "bop_kwh_por_ton": 100.0,  # Balance of Plant (consumo eléctrico fijo por tonelada)
+    "bop_kwh_por_ton": 100.0,  # Balance of Plant
 
     # H2 (calibración de aproximación)
     "eficiencia_h2_desde_teorico": 0.75,  # teórico ~160 → bruto ~120 (orden de magnitud)
@@ -59,7 +59,7 @@ PARAMS_BASE = {
     "kwh_por_kg_h2_upgrading": 10.0,      # consumo eléctrico auxiliar: compresión, WGS, PSA, etc.
     "kwh_e_por_kg_h2_fuelcell": 18.0,     # electricidad DC aproximada en fuel cell (orden de magnitud)
 
-    # Calor útil (fracción del contenido energético del residuo; MWh_th)
+    # Calor útil (fracción del PCI, expresado en MWh_th)
     "heat_fraction_A": 0.46,
     "heat_fraction_B": 0.14,
     "heat_fraction_C": 0.41,
@@ -103,13 +103,6 @@ def normalizar_composicion(comp: dict) -> dict:
         comp2[k] = vv
     return comp2
 
-def extraer_numero(txt):
-    if isinstance(txt, (int, float, np.number)):
-        return float(txt)
-    s = str(txt).replace("\xa0", " ").replace(",", "")
-    m = re.search(r"([+-]?\d+(?:\.\d+)?)", s)
-    return float(m.group(1)) if m else 0.0
-
 def fmt_es_num(x, dec=0, signo=False):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return ""
@@ -124,7 +117,6 @@ def fmt_es_num(x, dec=0, signo=False):
     return s
 
 def fmt_mcop(cop_anual):
-    # COP/año → MCOP/año
     return fmt_es_num(cop_anual / 1e6, dec=1, signo=False)
 
 def anotar_barras(ax, bars, valores, dec=1):
@@ -143,6 +135,10 @@ def anotar_barras(ax, bars, valores, dec=1):
             color="white"
         )
 
+def gj_to_mwh(gj):
+    # 1 MWh = 3.6 GJ  →  MWh = GJ/3.6
+    return gj / 3.6
+
 @st.cache_data
 def calcular_propiedades_mezcla(comp):
     pci_gj_ton = 0.0
@@ -155,7 +151,7 @@ def calcular_propiedades_mezcla(comp):
         h2_teorico_kg_ton += fr * d["h2_teorico_kg_ton"]
         fraccion_cenizas += fr * (d["cenizas_pct"] / 100.0)
 
-    pci_mwh_ton = pci_gj_ton / 3.6
+    pci_mwh_ton = gj_to_mwh(pci_gj_ton)
     pci_kcal_kg = pci_gj_ton * 239.0
     return {
         "pci_gj_ton": pci_gj_ton,
@@ -166,18 +162,21 @@ def calcular_propiedades_mezcla(comp):
     }
 
 def modo_defs():
-    # Cirugía mínima:
-    # - Modo C ahora puede exportar parte del H2 (si el usuario pone fracción a Fuel-Cell < 100%).
+    # Nota clave: en Modo C ahora permitimos (por slider) exportar una fracción del H2 neto.
     return {
         "A": {"nombre": "Modo A — Power/Heat-centric", "power_split": 1.0, "h2_split": 0.0, "h2_exporta": False},
         "B": {"nombre": "Modo B — H₂-centric",        "power_split": 0.0, "h2_split": 1.0, "h2_exporta": True},
-        "C": {"nombre": "Modo C — Mixed",             "power_split": 0.5, "h2_split": 0.5, "h2_exporta": True},
+        "C": {"nombre": "Modo C — Mixed",            "power_split": 0.5, "h2_split": 0.5, "h2_exporta": True},
     }
 
-def _clamp01(x):
-    return max(0.0, min(1.0, float(x)))
-
-def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_fc_B=0.0, frac_h2_a_fc_C=1.0):
+def calcular_modo_por_ton(
+    modo_key,
+    props,
+    p,
+    h2_grade="stationary",
+    frac_h2_a_fc_B=0.0,
+    frac_h2_a_fc_C=1.0,
+):
     md = modo_defs()[modo_key]
 
     pci_gj_ton = props["pci_gj_ton"]
@@ -190,7 +189,10 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
     power_gj_ton = syngas_gj_ton * md["power_split"]
     autoconsumo_proceso_gj_ton = power_gj_ton * p["autoconsumo_proceso_fraction"]
     neto_power_gj_ton = power_gj_ton - autoconsumo_proceso_gj_ton
-    electricidad_syngas_mwh_ton = (neto_power_gj_ton * 277.78) * p["eficiencia_generacion_electrica"]
+
+    # ⚠️ Unidad correcta:
+    # neto_power_gj_ton (GJ/ton) → MWh/ton = GJ/3.6
+    electricidad_syngas_mwh_ton = gj_to_mwh(neto_power_gj_ton) * p["eficiencia_generacion_electrica"]
 
     # ======= RUTA H2 =======
     h2_bruto_kg_ton = h2_teorico * p["eficiencia_h2_desde_teorico"] * md["h2_split"]
@@ -200,34 +202,29 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
     else:
         h2_neto_kg_ton = h2_bruto_kg_ton * p["h2_neto_factor_stationary"]
 
-    # Consumo eléctrico auxiliar (Upgrading): kWh/kg → MWh/ton
+    # Consumo eléctrico auxiliar asociado a upgrading del H2 neto (orden de magnitud).
     consumo_aux_mwh_ton = (h2_neto_kg_ton * p["kwh_por_kg_h2_upgrading"]) / 1000.0
 
-    # ======= SPLIT H2: Fuel-Cell vs Export =======
-    # Cirugía mínima:
-    # - Modo B usa slider B
-    # - Modo C usa slider C (antes era 100% Fuel-Cell implícito)
+    # ======= Split H2: Fuel-Cell vs Export =======
     if modo_key == "B":
-        frac_h2_a_fc = _clamp01(frac_h2_a_fc_B)
+        frac_h2_a_fc = max(0.0, min(1.0, frac_h2_a_fc_B))
     elif modo_key == "C":
-        frac_h2_a_fc = _clamp01(frac_h2_a_fc_C)
+        frac_h2_a_fc = max(0.0, min(1.0, frac_h2_a_fc_C))
     else:
         frac_h2_a_fc = 0.0
 
-    # Fuel-Cell DC: kWh/kg → MWh/ton (subcomponente)
+    # Electricidad DC desde Fuel-Cell (subcomponente, ya incluido en electricidad neta)
     electricidad_fuelcell_mwh_ton = (h2_neto_kg_ton * frac_h2_a_fc * p["kwh_e_por_kg_h2_fuelcell"]) / 1000.0
 
-    # H2 exportable (si aplica)
+    # H2 exportable (solo para modos que lo habilitan)
     h2_exportable_kg_ton = 0.0
     if md["h2_exporta"]:
         h2_exportable_kg_ton = h2_neto_kg_ton * (1.0 - frac_h2_a_fc)
 
-    # BOP (consumo fijo): kWh/ton → MWh/ton
+    # BOP (consumo fijo por tonelada)
     bop_mwh_ton = p["bop_kwh_por_ton"] / 1000.0
 
-    # Electricidad neta del sistema (balance)
-    # Nota: La electricidad DC vía Fuel-Cell se muestra como subcomponente,
-    # pero ya está incluida aquí.
+    # Electricidad neta del sistema (exporta + / importa -)
     electricidad_neta_mwh_ton = (
         electricidad_syngas_mwh_ton
         + electricidad_fuelcell_mwh_ton
@@ -235,7 +232,7 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
         - consumo_aux_mwh_ton
     )
 
-    # Calor útil (MWh_th/ton) — se mantiene como proxy fraccional (sin tocar el resto).
+    # Calor útil (MWh_th/ton)
     if modo_key == "A":
         calor_util_mwhth_ton = pci_mwh_ton * p["heat_fraction_A"]
     elif modo_key == "B":
@@ -252,9 +249,7 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
     transporte_cluster_kg = p["factor_transporte_kgco2_ton_km"] * p["dist_cluster_km"]
 
     grid_kg_por_mwh = p["factor_red_tco2e_mwh"] * 1000.0
-    # Exportar electricidad (MWh>0) produce "evitación" (negativo).
-    # Importar electricidad (MWh<0) produce huella (positivo), automáticamente por el signo.
-    efecto_electricidad_kg = -electricidad_neta_mwh_ton * grid_kg_por_mwh
+    efecto_electricidad_kg = -electricidad_neta_mwh_ton * grid_kg_por_mwh  # export (-) evita; import (+) carga
 
     proceso_sin_ccs_kg = co2_capturable_ton_ton * 1000.0
     proceso_con_ccs_kg = proceso_sin_ccs_kg * (1.0 - p["ccs_captura_frac"])
@@ -269,7 +264,6 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
 
     return {
         "modo": md["nombre"],
-        # Por definición: 1 t tratada = 1 t desviada del relleno
         "residuos_desviados_ton_ton": 1.0,
 
         "pci_gj_ton": pci_gj_ton,
@@ -278,7 +272,7 @@ def calcular_modo_por_ton(modo_key, props, p, h2_grade="stationary", frac_h2_a_f
         "electricidad_neta_mwh_e_ton": electricidad_neta_mwh_ton,
         "consumo_aux_mwh_e_ton": consumo_aux_mwh_ton,
 
-        # Subcomponente (NO sumar aparte): electricidad DC bruta desde la fracción de H2 a Fuel-Cell
+        # Subcomponente (NO sumar aparte)
         "electricidad_fc_mwh_e_ton": electricidad_fuelcell_mwh_ton,
 
         "calor_util_mwh_th_ton": calor_util_mwhth_ton,
@@ -339,7 +333,6 @@ def construir_tabla_modo(kpi_ton, kpi_ano):
     ]
     return pd.DataFrame(filas, columns=["Indicador", "Unidad (anual)", "Total anual", "Unidad (por ton)", "Por tonelada"])
 
-# ---------- Comparadores gráficos ----------
 def graf_comparador_simple(titulo, ylabel, modos, vals, dec=1):
     fig, ax = plt.subplots(figsize=(10, 3.6))
     x = np.arange(len(modos))
@@ -364,14 +357,14 @@ def calcular_economia_ultra_compacta(kpi_ano, econ):
 
     ingreso_residuos = residuos_t * econ["tarifa_residuos_cop_ton"]
 
-    # Separación Import/Export (cirugía mínima)
+    # Separación: precio export vs precio import
     kwh = elec_mwh * 1000.0
     if kwh >= 0:
-        ingreso_elec = kwh * econ["precio_export_cop_kwh"]
+        ingreso_elec = kwh * econ["precio_electricidad_export_cop_kwh"]
         costo_elec = 0.0
     else:
         ingreso_elec = 0.0
-        costo_elec = abs(kwh) * econ["precio_import_cop_kwh"]
+        costo_elec = abs(kwh) * econ["precio_electricidad_import_cop_kwh"]
 
     ingreso_h2 = (h2_export_t * 1000.0) * econ["precio_h2_cop_kg"]
     ingreso_imby = imby_t * econ["precio_imbyrock_cop_ton"]
@@ -430,7 +423,7 @@ def formatear_tabla_anual(df):
             if "t/año" in u and "CO₂" not in u:
                 vals.append(fmt_es_num(v, dec=0))
             elif "MWh" in u:
-                vals.append(fmt_es_num(v, dec=0, signo=False))
+                vals.append(fmt_es_num(v, dec=0, signo=True))
             elif "t H₂/año" in u:
                 vals.append(fmt_es_num(v, dec=1))
             elif "tCO₂e/año" in u:
@@ -505,34 +498,33 @@ with st.sidebar:
                 st.write(f"- **{comp}**: {d['pct']:.1f}%")
 
     st.subheader("⚙️ Modo de operación")
-    modo_operacion = st.selectbox("Selecciona el modo:", ["A — Power/Heat-centric", "B — H₂-centric", "C — Mixed"], index=2)
+    modo_operacion = st.selectbox(
+        "Selecciona el modo:",
+        ["A — Power/Heat-centric", "B — H₂-centric", "C — Mixed"],
+        index=2
+    )
     modo_key = modo_operacion.split("—")[0].strip()
 
     st.subheader("🧴 Grado de H₂ (cuando aplica)")
     h2_grade = st.selectbox("Grado de H₂:", ["Estacionario (≈95% / fast-charging)", "Movilidad (≈99.999%)"], index=0)
     h2_grade_key = "stationary" if h2_grade.startswith("Estacionario") else "mobility"
 
-    # ======= Cirugía mínima: slider también para Modo C =======
+    # ---- Split H2 para modos B y C (lo pediste explícito) ----
     st.subheader("🔁 Ruta interna del H₂ (modos B y C)")
-    with st.expander("Configurar split H₂ → Fuel-Cell (DC) vs H₂ exportable"):
-        frac_h2_a_fc_pct_B = st.slider(
+    with st.expander("Configurar split H₂ → Fuel-Cell (DC) vs H₂ exportable", expanded=True):
+        frac_h2_a_fc_B_pct = st.slider(
             "Modo B — Fracción de H₂ a Fuel-Cell (0–100%)",
             min_value=0.0, max_value=100.0, value=0.0, step=5.0,
             help="0% = todo el H₂ neto exportable • 100% = todo el H₂ neto se convierte a electricidad DC (sin exportar H₂)."
         )
         st.caption("Modo B: ✅ 0% = todo exportable • ✅ 100% = todo a DC (Fuel-Cell).")
 
-        frac_h2_a_fc_pct_C = st.slider(
+        frac_h2_a_fc_C_pct = st.slider(
             "Modo C — Fracción de H₂ a Fuel-Cell (0–100%)",
             min_value=0.0, max_value=100.0, value=100.0, step=5.0,
-            help="En Modo C, además existe ruta power (syngas→electricidad). Aquí ajustas SOLO el reparto del H₂ neto."
+            help="En Modo C, el H₂ neto del 'split' puede ir a DC (Fuel-Cell) o exportarse. 100% replica el supuesto previo (todo a DC)."
         )
         st.caption("Modo C: ✅ 0% = H₂ neto exportable • ✅ 100% = H₂ neto a DC (Fuel-Cell).")
-
-    st.info(
-        "Nota clave: **Electricidad DC vía Fuel-Cell** es un **subcomponente** que ya está incluido en "
-        "**Electricidad neta del sistema** (no se suma dos veces)."
-    )
 
     st.subheader("📥 Capacidad")
     cap_total = st.number_input(
@@ -542,48 +534,48 @@ with st.sidebar:
 
     st.subheader("🌍 Emisiones (supuestos editables)")
     with st.expander("Editar factores (relleno / red / transporte / CCS)"):
-        PARAMS_BASE["factor_relleno_kgco2e_ton"] = st.number_input(
+        factor_relleno = st.number_input(
             "Factor relleno (kgCO₂e/ton) — línea base", min_value=0.0, max_value=2000.0,
-            value=float(PARAMS_BASE["factor_relleno_kgco2e_ton"]), step=10.0
+            value=float(PARAMS_DEFAULT["factor_relleno_kgco2e_ton"]), step=10.0
         )
-        PARAMS_BASE["factor_red_tco2e_mwh"] = st.number_input(
+        factor_red = st.number_input(
             "Factor de emisión red (tCO₂e/MWh)", min_value=0.0, max_value=1.5,
-            value=float(PARAMS_BASE["factor_red_tco2e_mwh"]), step=0.01, format="%.5f"
+            value=float(PARAMS_DEFAULT["factor_red_tco2e_mwh"]), step=0.01, format="%.5f"
         )
-        PARAMS_BASE["factor_transporte_kgco2_ton_km"] = st.number_input(
+        factor_transporte = st.number_input(
             "Transporte (kgCO₂/(ton·km))", min_value=0.0, max_value=1.0,
-            value=float(PARAMS_BASE["factor_transporte_kgco2_ton_km"]), step=0.005, format="%.3f"
+            value=float(PARAMS_DEFAULT["factor_transporte_kgco2_ton_km"]), step=0.005, format="%.3f"
         )
-        PARAMS_BASE["dist_baseline_km"] = st.number_input(
+        dist_baseline = st.number_input(
             "Distancia baseline AMVA→La Pradera (km)", min_value=0.0, max_value=200.0,
-            value=float(PARAMS_BASE["dist_baseline_km"]), step=1.0
+            value=float(PARAMS_DEFAULT["dist_baseline_km"]), step=1.0
         )
-        PARAMS_BASE["dist_cluster_km"] = st.number_input(
+        dist_cluster = st.number_input(
             "Distancia clúster descentralizado (km)", min_value=0.0, max_value=100.0,
-            value=float(PARAMS_BASE["dist_cluster_km"]), step=1.0
+            value=float(PARAMS_DEFAULT["dist_cluster_km"]), step=1.0
         )
-        PARAMS_BASE["co2_capturable_ton_por_ton"] = st.number_input(
+        co2_capturable = st.number_input(
             "CO₂ capturable del proceso (tCO₂/ton)", min_value=0.2, max_value=2.0,
-            value=float(PARAMS_BASE["co2_capturable_ton_por_ton"]), step=0.05
+            value=float(PARAMS_DEFAULT["co2_capturable_ton_por_ton"]), step=0.05
         )
-        PARAMS_BASE["ccs_captura_frac"] = st.number_input(
+        ccs_frac = st.number_input(
             "Captura CCS (fracción 0–1)", min_value=0.0, max_value=1.0,
-            value=float(PARAMS_BASE["ccs_captura_frac"]), step=0.01
+            value=float(PARAMS_DEFAULT["ccs_captura_frac"]), step=0.01
         )
-        PARAMS_BASE["emis_indirectas_kgco2e_ton"] = st.number_input(
+        emis_ind = st.number_input(
             "Emisiones indirectas (kgCO₂e/ton) — proxy", min_value=0.0, max_value=500.0,
-            value=float(PARAMS_BASE["emis_indirectas_kgco2e_ton"]), step=5.0
+            value=float(PARAMS_DEFAULT["emis_indirectas_kgco2e_ton"]), step=5.0
         )
 
     st.subheader("🔌 Ruta H₂: consumos y Fuel-Cell")
     with st.expander("Editar supuestos H₂ (consumo auxiliar / Fuel-Cell)"):
-        PARAMS_BASE["kwh_por_kg_h2_upgrading"] = st.number_input(
+        kwh_kg_h2_up = st.number_input(
             "Upgrading H₂ (kWhₑ/kg H₂) — consumo eléctrico auxiliar",
-            min_value=0.0, max_value=30.0, value=float(PARAMS_BASE["kwh_por_kg_h2_upgrading"]), step=0.5
+            min_value=0.0, max_value=30.0, value=float(PARAMS_DEFAULT["kwh_por_kg_h2_upgrading"]), step=0.5
         )
-        PARAMS_BASE["kwh_e_por_kg_h2_fuelcell"] = st.number_input(
+        kwh_kg_h2_fc = st.number_input(
             "Fuel-Cell (kWhₑ/kg H₂) — electricidad DC entregable",
-            min_value=0.0, max_value=30.0, value=float(PARAMS_BASE["kwh_e_por_kg_h2_fuelcell"]), step=0.5
+            min_value=0.0, max_value=30.0, value=float(PARAMS_DEFAULT["kwh_e_por_kg_h2_fuelcell"]), step=0.5
         )
 
     st.subheader("💰 Módulo económico ultra-compacto (sin CAPEX)")
@@ -593,17 +585,16 @@ with st.sidebar:
             min_value=0.0, max_value=300000.0, value=109000.0, step=1000.0
         )
 
-        # ======= Cirugía mínima: separar export/import =======
-        precio_export = st.number_input(
-            "Precio electricidad exportada (COP/kWh)",
+        # ✅ Separación export/import (pedido)
+        precio_elec_export = st.number_input(
+            "Precio electricidad EXPORTADA (COP/kWh)",
             min_value=0.0, max_value=2000.0, value=300.0, step=10.0
         )
-        precio_import = st.number_input(
-            "Precio electricidad importada (COP/kWh)",
-            min_value=0.0, max_value=2000.0, value=300.0, step=10.0,
-            help="Si el sistema importa electricidad (Electricidad neta < 0), este precio se usa como costo."
+        precio_elec_import = st.number_input(
+            "Precio electricidad IMPORTADA (COP/kWh)",
+            min_value=0.0, max_value=4000.0, value=300.0, step=10.0
         )
-        st.caption("Nota: exportación e importación pueden tener precios distintos. Si no se conoce, puedes iniciar con el mismo valor y luego ajustar.")
+        st.caption("Nota: si el sistema importa electricidad (electricidad neta < 0), se costea a **precio IMPORT**; si exporta (>0), se ingresa a **precio EXPORT**.")
 
         precio_h2 = st.number_input(
             "Precio H₂ exportable (COP/kg) — opcional",
@@ -617,10 +608,25 @@ with st.sidebar:
         carbono_usd = st.number_input("Precio carbono (USD/tCO₂e)", min_value=0.0, max_value=500.0, value=0.0, step=1.0)
         fx_cop_usd = st.number_input("Tasa de cambio (COP/USD)", min_value=1000.0, max_value=10000.0, value=4200.0, step=50.0)
 
+    # Construir params efectivos (evita “mutar” defaults)
+    PARAMS = PARAMS_DEFAULT.copy()
+    PARAMS.update({
+        "factor_relleno_kgco2e_ton": float(factor_relleno),
+        "factor_red_tco2e_mwh": float(factor_red),
+        "factor_transporte_kgco2_ton_km": float(factor_transporte),
+        "dist_baseline_km": float(dist_baseline),
+        "dist_cluster_km": float(dist_cluster),
+        "co2_capturable_ton_por_ton": float(co2_capturable),
+        "ccs_captura_frac": float(ccs_frac),
+        "emis_indirectas_kgco2e_ton": float(emis_ind),
+        "kwh_por_kg_h2_upgrading": float(kwh_kg_h2_up),
+        "kwh_e_por_kg_h2_fuelcell": float(kwh_kg_h2_fc),
+    })
+
     econ_params = {
         "tarifa_residuos_cop_ton": float(tarifa_residuos),
-        "precio_export_cop_kwh": float(precio_export),
-        "precio_import_cop_kwh": float(precio_import),
+        "precio_electricidad_export_cop_kwh": float(precio_elec_export),
+        "precio_electricidad_import_cop_kwh": float(precio_elec_import),
         "precio_h2_cop_kg": float(precio_h2),
         "precio_imbyrock_cop_ton": float(precio_imby),
         "incluir_carbono": bool(incluir_carbono),
@@ -664,7 +670,7 @@ else:
         f"El PCI ({pci_gj:.2f} GJ/ton) está por debajo de {UMBRAL_CASI_AUTOSUF_GJ_TON:.1f} GJ/ton."
     )
 
-cap_beu = PARAMS_BASE["capacidad_beu_ton_ano"]
+cap_beu = PARAMS["capacidad_beu_ton_ano"]
 n_beu = int(math.ceil(cap_total / cap_beu))
 cap_por_beu = cap_total / n_beu
 st.info(
@@ -673,28 +679,30 @@ st.info(
 )
 
 st.markdown("---")
-c1, c2 = st.columns([1, 1])
-with c1:
-    btn_calcular_modo = st.button("🚀 Calcular modo seleccionado", type="primary", use_container_width=True)
-with c2:
-    btn_comparar = st.button("🧭 Comparar Modos A vs B vs C (mismos supuestos)", use_container_width=True)
 
-frac_B = float(frac_h2_a_fc_pct_B) / 100.0
-frac_C = float(frac_h2_a_fc_pct_C) / 100.0
+# ✅ Para evitar “congelamientos”: toggles que se mantienen al mover sliders
+col1, col2 = st.columns([1, 1])
+with col1:
+    mostrar_modo = st.toggle("📌 Mostrar resultados del modo seleccionado", value=True)
+with col2:
+    mostrar_comparador = st.toggle("🧭 Mostrar comparador A vs B vs C (mismos supuestos)", value=True)
+
+frac_B = float(frac_h2_a_fc_B_pct) / 100.0
+frac_C = float(frac_h2_a_fc_C_pct) / 100.0
 
 # =============================================
 # RESULTADOS — MODO SELECCIONADO
 # =============================================
-if btn_calcular_modo:
+if mostrar_modo:
     st.header("📌 Resultados — modo seleccionado")
 
     kpi_ton = calcular_modo_por_ton(
         modo_key,
         props,
-        PARAMS_BASE,
+        PARAMS,
         h2_grade=h2_grade_key,
         frac_h2_a_fc_B=frac_B,
-        frac_h2_a_fc_C=frac_C
+        frac_h2_a_fc_C=frac_C,
     )
     kpi_ano = escalar_a_anual(kpi_ton, cap_total)
 
@@ -712,15 +720,20 @@ if btn_calcular_modo:
     st.dataframe(df_show, use_container_width=True, hide_index=True)
 
     st.info(
-        "Claridad de lectura: **“Electricidad DC bruta vía Fuel-Cell”** es un **subcomponente** "
-        "que ya está incluido en **“Electricidad neta del sistema”**. Se muestra para visualizar el “retorno” eléctrico del H₂, "
-        "**no** para sumarse como energía adicional."
+        "Guía: **“Electricidad DC bruta vía Fuel-Cell”** es un **subcomponente** ya incluido en "
+        "**“Electricidad neta del sistema”**. Se muestra para visualizar el retorno eléctrico del H₂, "
+        "pero **no** debe sumarse como energía adicional."
+    )
+
+    st.caption(
+        "Nota técnica: el **consumo eléctrico auxiliar** de la ruta H₂ se aplica al H₂ neto (orden de magnitud). "
+        "En futuras iteraciones puede diferenciarse por grado/pureza o por si el H₂ se exporta vs se usa localmente."
     )
 
 # =============================================
 # COMPARADOR — MODOS A vs B vs C
 # =============================================
-if btn_comparar:
+if mostrar_comparador:
     st.header("🧭 Comparador de escenarios A vs B vs C")
 
     kpis_ton = {}
@@ -729,17 +742,17 @@ if btn_comparar:
 
     for mk in ["A", "B", "C"]:
         kpi_t = calcular_modo_por_ton(
-            mk, props, PARAMS_BASE,
+            mk, props, PARAMS,
             h2_grade=h2_grade_key,
             frac_h2_a_fc_B=frac_B,
-            frac_h2_a_fc_C=frac_C
+            frac_h2_a_fc_C=frac_C,
         )
         kpi_a = escalar_a_anual(kpi_t, cap_total)
         kpis_ton[mk] = kpi_t
         kpis_ano[mk] = kpi_a
         econ_res[mk] = calcular_economia_ultra_compacta(kpi_a, econ_params)
 
-    st.subheader("📌 Comparación anual (resultados directos con toneladas/año)")
+    st.subheader("📌 Comparación anual (resultados directos con tus toneladas/año)")
     filas_anual = [
         ("Residuos desviados (disposición evitada)", "t/año", "residuos_desviados_t_ano"),
         ("IMBYROCK® (escoria vitrificada)", "t/año", "imbyrock_t_ano"),
@@ -756,10 +769,10 @@ if btn_comparar:
         ("Δ vs línea base SIN CCS (Boson − línea base)", "tCO₂e/año", "delta_sin_ccs_tco2e_ano"),
         ("Δ vs línea base CON CCS (Boson − línea base)", "tCO₂e/año", "delta_con_ccs_tco2e_ano"),
     ]
-    data_anual = []
-    for nombre, unidad, key in filas_anual:
-        data_anual.append([nombre, unidad, kpis_ano["A"][key], kpis_ano["B"][key], kpis_ano["C"][key]])
-    df_comp_anual = pd.DataFrame(data_anual, columns=["Indicador", "Unidad", "Modo A", "Modo B", "Modo C"])
+    df_comp_anual = pd.DataFrame(
+        [[n, u, kpis_ano["A"][k], kpis_ano["B"][k], kpis_ano["C"][k]] for n, u, k in filas_anual],
+        columns=["Indicador", "Unidad", "Modo A", "Modo B", "Modo C"]
+    )
     st.dataframe(formatear_tabla_anual(df_comp_anual), use_container_width=True, hide_index=True)
 
     st.subheader("📊 Comparación por tonelada (normalizada; misma composición y supuestos)")
@@ -779,16 +792,17 @@ if btn_comparar:
         ("Δ vs línea base SIN CCS (Boson − línea base)", "kgCO₂e/ton", "delta_sin_ccs_kgco2e_ton"),
         ("Δ vs línea base CON CCS (Boson − línea base)", "kgCO₂e/ton", "delta_con_ccs_kgco2e_ton"),
     ]
-    data_ton = []
-    for nombre, unidad, key in filas_ton:
-        data_ton.append([nombre, unidad, kpis_ton["A"][key], kpis_ton["B"][key], kpis_ton["C"][key]])
-    df_comp_ton = pd.DataFrame(data_ton, columns=["Indicador", "Unidad", "Modo A", "Modo B", "Modo C"])
+    df_comp_ton = pd.DataFrame(
+        [[n, u, kpis_ton["A"][k], kpis_ton["B"][k], kpis_ton["C"][k]] for n, u, k in filas_ton],
+        columns=["Indicador", "Unidad", "Modo A", "Modo B", "Modo C"]
+    )
     st.dataframe(formatear_tabla_ton(df_comp_ton), use_container_width=True, hide_index=True)
 
     st.info(
-        "Nota: la tabla **por tonelada** es normalizada (i.e **Residuos desviados = 1,0 t/ton**). "
-        "La tabla **anual** muestra el valor directo para la entrada (p.ej., **1.277.500 t/año**). "
-        "La fila **Electricidad DC bruta vía Fuel-Cell** es un **subcomponente** ya incluido en **Electricidad neta del sistema**."
+        "Lectura rápida:\n"
+        "- Tabla **por tonelada**: normalizada (por eso **Residuos desviados = 1,0 t/ton**).\n"
+        "- Tabla **anual**: valor directo para tus toneladas/año.\n"
+        "- **Electricidad DC vía Fuel-Cell** es **subcomponente** (ya incluido en **Electricidad neta**)."
     )
 
     st.subheader("📈 Comparadores gráficos (resumen)")
@@ -836,9 +850,7 @@ if btn_comparar:
     st.caption(
         "Nota de aproximación: el comparador económico **NO incluye CAPEX ni OPEX**. "
         "El objetivo es visualizar órdenes de magnitud e identificar el modo con mejor mezcla de ingresos bajo supuestos dados. "
-        "Ingresos por IMBYROCK®, carbono u otros (p. ej., H₂ exportable) pueden ser **0** si no se conocen precios.\n\n"
-        "En este comparador: **electricidad neta > 0** se valora con **precio de exportación**, "
-        "y **electricidad neta < 0** se valora con **precio de importación**."
+        "Ingresos por IMBYROCK®, carbono u otros (p. ej., H₂ exportable) pueden ser **0** si no se conocen precios."
     )
 
     df_econ = tabla_economica_por_modo(econ_res)
