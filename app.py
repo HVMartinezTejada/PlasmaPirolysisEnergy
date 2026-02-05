@@ -8,7 +8,7 @@ import re
 # CONFIGURACIÓN DE PÁGINA
 # =============================================
 st.set_page_config(page_title="Calculadora Boson Energy", layout="wide")
-st.title("⚡ Calculadora de Balance y Emisiones - Tecnología Boson")
+st.title("⚡ Boson BEU — Impacto: Residuos → Energía → CO₂e")
 st.markdown("---")
 
 # =============================================
