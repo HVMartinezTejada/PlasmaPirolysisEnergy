@@ -901,7 +901,7 @@ if btn_comparar:
 
     st.info(
         "Nota: **por tonelada** es normalizada (**Residuos desviados = 1,0 t/ton**). "
-        "**Anual** muestra el valor directo para tu entrada (p.ej. 1.277.500 t/año). "
+        "**Anual** muestra el valor directo para el dato de residuos a tratar en t/año). "
         "La fila **Electricidad DC bruta vía Fuel-Cell** es un subcomponente ya incluido en **Electricidad neta del sistema**."
     )
 
