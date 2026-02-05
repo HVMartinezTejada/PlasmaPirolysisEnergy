@@ -752,7 +752,7 @@ if mostrar_comparador:
         kpis_ano[mk] = kpi_a
         econ_res[mk] = calcular_economia_ultra_compacta(kpi_a, econ_params)
 
-    st.subheader("📌 Comparación anual (resultados directos con tus toneladas/año)")
+    st.subheader("📌 Comparación anual (resultados directos respecto a toneladas/año)")
     filas_anual = [
         ("Residuos desviados (disposición evitada)", "t/año", "residuos_desviados_t_ano"),
         ("IMBYROCK® (escoria vitrificada)", "t/año", "imbyrock_t_ano"),
@@ -801,7 +801,7 @@ if mostrar_comparador:
     st.info(
         "Lectura rápida:\n"
         "- Tabla **por tonelada**: normalizada (por eso **Residuos desviados = 1,0 t/ton**).\n"
-        "- Tabla **anual**: valor directo para tus toneladas/año.\n"
+        "- Tabla **anual**: valor directo respecto a toneladas/año.\n"
         "- **Electricidad DC vía Fuel-Cell** es **subcomponente** (ya incluido en **Electricidad neta**)."
     )
 
