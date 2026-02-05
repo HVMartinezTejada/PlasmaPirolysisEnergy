@@ -16,11 +16,11 @@ st.markdown("---")
 # =============================================
 CREATED_BY_HTML = (
     "<p style='text-align:center; font-size:12px; color:gray;'>"
-    "Creado por: H. Vladimir Martínez-T &lt;hader.martinez@upb.edu.co&gt; — NDA Boson Energy-UPB 2025"
+    "H. Vladimir Martínez-T &lt;hader.martinez@upb.edu.co&gt; — NDA Boson Energy-UPB 2025"
     "</p>"
-    "<p style='text-align:center; font-size:12px; color:gray;'>"
-    "Created by: H. Vladimir Martínez-T &lt;hader.martinez@upb.edu.co&gt; NDA Boson Energy-UPB 2025"
-    "</p>"
+    #"<p style='text-align:center; font-size:12px; color:gray;'>"
+    #"Created by: H. Vladimir Martínez-T &lt;hader.martinez@upb.edu.co&gt; NDA Boson Energy-UPB 2025"
+    #"</p>"
 )
 
 # =============================================
