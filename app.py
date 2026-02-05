@@ -743,8 +743,8 @@ if btn_comparar:
     st.dataframe(formatear_tabla_ton(df_comp_ton), use_container_width=True, hide_index=True)
 
     st.info(
-        "Nota: la tabla **por tonelada** es normalizada (por eso **Residuos desviados = 1,0 t/ton**). "
-        "La tabla **anual** muestra el valor directo para tu entrada (por ejemplo, **1.277.500 t/año**). "
+        "Nota: la tabla **por tonelada** es normalizada (i.e **Residuos desviados = 1,0 t/ton**). "
+        "La tabla **anual** muestra el valor directo para la entrada (p.ej., **1.277.500 t/año**). "
         "La fila **Electricidad DC bruta vía Fuel-Cell** es un **subcomponente** ya incluido en **Electricidad neta del sistema**."
     )
 
