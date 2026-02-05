@@ -386,7 +386,7 @@ with st.sidebar:
     if modo_operacion == "Modo A — Power/Heat-centric":
         st.info("📌 Enfocado en **electricidad neta** y **calor útil**. H₂ por defecto = 0 (evita doble conteo).")
     elif modo_operacion == "Modo B — H₂-centric":
-        st.info("📌 Enfocado en **producción de H₂**. Aparece el **consumo parásito (parasitic power)** por upgrading.")
+        st.info("📌 Enfocado en **producción de H₂**. Requiere electricidad para upgrading.")
     else:
         st.info("📌 Enfocado en **hub energético**: compensación explícita entre ruta potencia y ruta H₂.")
 
