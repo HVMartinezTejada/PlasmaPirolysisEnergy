@@ -7,7 +7,7 @@ import re
 # =============================================
 # CONFIGURACIÓN DE PÁGINA
 # =============================================
-st.set_page_config(page_title="Calculadora Boson Energy", layout="wide")
+st.set_page_config(page_title="Calculadora BE", layout="wide")
 st.title("⚡ Boson BEU — Impacto: Residuos → Energía → CO₂e")
 st.markdown("---")
 
